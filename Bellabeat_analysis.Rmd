@@ -1,0 +1,502 @@
+---
+title: "Bellabeat_analysis"
+output: html_notebook
+---
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+### import libraries
+```{r}
+#install.packages('tidyverse')
+library(tidyverse) 
+#install.packages('foreign')
+library(foreign)
+#install.packages('ggplot2')
+library(ggplot2)
+library("scales")
+#install.packages('plyr')
+#library(plyr)
+```
+
+## Load datasets
+#### fitbit data & garmin data & sleep data
+```{r}
+dailyActivity_fitbit <- read.csv("/Users/jordynohashi/Desktop/DA/bellabeatCS/FitabaseData/dailyActivity_merged.csv")
+data_study <- read.csv("/Users/jordynohashi/Desktop/DA/bellabeatCS/dataverse_files/data_raw.csv",sep=",")
+sleep_data <- read.xport("/Users/jordynohashi/Desktop/DA/bellabeatCS/P_SLQ.xpt")
+```
+
+### Clean up data
+#### sleep data rename cols
+```{r}
+sleep_data <- sleep_data %>% 
+  dplyr::rename('weekdayHRS'='SLD012', 'weekendHRS'='SLD013', 'snore'='SLQ030', 'bad_breathing'='SLQ040', 'bad_sleep'='SLQ050', 'sleepy'='SLQ120') 
+```
+
+#### remove duplicate data
+```{r}
+dailyActivity_fitbit <- dailyActivity_fitbit %>% distinct()
+data_study <- data_study %>% distinct()
+sleep_data <- sleep_data %>% distinct()
+```
+
+#### Remove missing vals
+```{r}
+sleep_data <- sleep_data %>% drop_na(weekdayHRS,weekendHRS)
+```
+
+### Group sleep hours by categories 
+less than 6: Not recommended sleep, 1
+6: Appropriate sleep, 2
+7-9: Recommended sleep, 3
+10-11: Appropriate sleep, 2 
+more than 11: Over sleep, 4
+```{r}
+# sleep label
+sleep_data <- sleep_data %>% mutate(Sleep =
+  case_when(weekdayHRS < 6 ~ "Not recommended sleep",
+            weekdayHRS == 6 | weekdayHRS < 7 ~ "Appropriate sleep",
+            weekdayHRS >= 7 & weekdayHRS <= 9 ~ "Recommended sleep",
+            weekdayHRS > 9 & weekdayHRS <= 11 ~ "Appropriate sleep",
+            weekdayHRS > 11 ~ "Over sleep")
+)
+
+# sleep number
+sleep_data <- sleep_data %>% mutate(SleepNum =
+  case_when(weekdayHRS < 6 ~ 1,
+            weekdayHRS == 6 | weekdayHRS < 7 ~ 2,
+            weekdayHRS >= 7 & weekdayHRS <= 9 ~ 3,
+            weekdayHRS > 9 & weekdayHRS <= 11 ~ 2,
+            weekdayHRS > 11 ~ 4)
+)
+```
+
+### Merge two datasets -> df
+columns: id, date, steps, calories, sedMin, lightMin, modMin, veryMin, provider
+
+#### data_study -> df_study
+convert date, ID->id, Date->date, Steps->steps, TEE->calories, Sedentary->sedMin, 
+LPA->lightMin, MPA->modMin, VPA->veryMin, Provider->provider
+```{r}
+data_study$date <- strptime(as.character(data_study$Date), "%d.%m.%Y")
+data_study$date <- format(data_study$date, "%m/%d/%Y")
+df_study <- data_study[, c("ID","date","Steps","TEE","Sedentary","LPA","MPA","VPA","Provider")]
+df_study <- df_study %>% 
+  dplyr::rename('id'='ID', 'steps'='Steps', 'calories'='TEE', 'sedMin'='Sedentary', 
+         'lightMin'='LPA', 'modMin'='MPA', 'veryMin'='VPA', 'provider'='Provider')
+```
+
+#### dailyActivity_fitbit -> fitbit_study
+Id->id, ActivityDate->date, TotalSteps->steps, VeryActiveMinutes->veryMin,
+FairlyActiveMinutes->modMin, LightlyActiveMinutes->lightMin, Calories->calories, add provider
+```{r}
+fitbit_study <- dailyActivity_fitbit[, c("Id","ActivityDate","TotalSteps","Calories", "SedentaryMinutes", "LightlyActiveMinutes", "FairlyActiveMinutes", "VeryActiveMinutes")]
+fitbit_study <- fitbit_study %>% 
+  dplyr::rename('id'='Id', 'date'='ActivityDate', 'steps'='TotalSteps','calories'='Calories', 'sedMin'='SedentaryMinutes', 'lightMin'='LightlyActiveMinutes',
+         'modMin'='FairlyActiveMinutes', 'veryMin'='VeryActiveMinutes',)
+fitbit_study$provider <- "Fitbit"
+```
+
+```{r}
+df <- rbind(df_study, fitbit_study)
+glimpse(df)
+```
+
+### filter out valid days(>= 150 steps)
+```{r}
+df_val <- df[df$steps>=150,]
+glimpse(df_val)
+```
+
+#### convert date character to date type
+```{r}
+typeof(df_val$date)
+df_val$date <- as.Date(df_val$date, "%m/%d/%Y")
+df_val$num <- as.numeric(df_val$date, "%m/%d/%Y")
+typeof(df_val$date)
+```
+
+### create new data frame with id, number of observations, average steps, calories, activities, provider
+```{r}
+df_summary <-
+  df_val %>%
+  group_by(id) %>%
+  mutate(count = n()) %>%
+  summarise(avg_steps=mean(steps),
+            avg_calories=mean(calories),
+            avg_sedMin=mean(sedMin),
+            avg_lightMin=mean(lightMin),
+            avg_modMin=mean(modMin),
+            avg_veryMin=mean(veryMin),
+            provider=first(provider),
+            count=mean(count))
+```
+
+
+
+### Check the summary
+```{r}
+summary(df_val)
+```
+
+```{r}
+summary(df_summary)
+```
+
+```{r}
+df_fitbit <- df_val[df_val$provider=="Fitbit",]
+summary(df_fitbit)
+```
+
+```{r}
+df_garmin <- df_val[df_val$provider=="Garmin",]
+summary(df_garmin)
+```
+
+```{r}
+df_sum_large <- df_summary[df_summary$count>100,]
+df_sum_fitbit <- df_sum_large[df_sum_large$provider=="Fitbit",]
+summary(df_sum_fitbit)
+```
+
+```{r}
+df_sum_garmin <- df_sum_large[df_sum_large$provider=="Garmin",]
+summary(df_sum_garmin)
+```
+
+
+```{r}
+summary(sleep_data)
+```
+
+
+### Garmin vs Fitbit
+```{r}
+glimpse(df_fitbit)
+glimpse(df_garmin)
+```
+
+### Steps
+```{r}
+ggplot(data=df_val) +  
+  geom_histogram( aes(steps) ) 
+```
+
+### Calories
+```{r}
+ggplot(data=df_val) +  
+  geom_histogram( aes(calories) ) 
+```
+
+### Sedentary physical activity
+```{r}
+ggplot(data=df_val) +  
+  geom_histogram( aes(sedMin) ) 
+```
+
+### Light physical activity
+```{r}
+ggplot(data=df_val) +  
+  geom_histogram( aes(lightMin) ) 
+```
+
+### Moderate physical activity
+```{r}
+ggplot(data=df_val) +  
+  geom_histogram( aes(modMin) ) 
+```
+
+### Vigorous physical activity
+```{r}
+ggplot(data=df_val) +  
+  geom_histogram( aes(veryMin) ) 
+```
+
+### Garmin vs Fitbit steps & calories
+```{r}
+ggplot(df_val, aes(steps, calories)) + 
+  geom_point() +
+  facet_grid( provider ~ . ) +
+  labs(title = "Steps vs Calories", x='Steps', y='Calories')
+```
+
+### Garmin vs Fitbit minutes of moderate physical activity & calories
+```{r}
+ggplot(df_val, aes(modMin, calories)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+```
+
+### Garmin vs Fitbit minutes of vigorous physical activity & calories
+```{r}
+ggplot(df_val, aes(veryMin, calories)) + 
+  geom_point() +
+  facet_grid( provider ~ . ) +
+  labs(title = "Vigorous physical activity vs Calories", x='Minutes of vigorous physical activity', y='Calories')
+```
+
+### Garmin vs Fitbit minutes of moderate physical activity & steps
+```{r}
+ggplot(df_val, aes(modMin, steps)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+```
+
+### Garmin vs Fitbit minutes of vigorous physical activity & steps
+```{r}
+ggplot(df_val, aes(veryMin, steps)) + 
+  geom_point() +
+  facet_grid( provider ~ . ) +
+  labs(title = "Vigorous physical activity vs Steps", x='Minutes of vigorous physical activity', y='Steps')
+```
+
+### graph number of observations vs average steps, calories, activities (see common occurence and consistency effects) (also compare fitbit vs garmin)
+```{r}
+ggplot(data=df_summary) +  
+  geom_histogram( aes(avg_steps) ) 
+ggplot(data=df_summary) +  
+  geom_histogram( aes(avg_calories) ) 
+ggplot(data=df_summary) +  
+  geom_histogram( aes(avg_sedMin) ) 
+ggplot(data=df_summary) +  
+  geom_histogram( aes(avg_lightMin) ) 
+ggplot(data=df_summary) +  
+  geom_histogram( aes(avg_modMin) ) 
+ggplot(data=df_summary) +  
+  geom_histogram( aes(avg_veryMin) ) 
+```
+### Graphs above: count represents people, shows number of people with varying avgs of steps, calories, etc.
+```{r}
+ggplot(df_summary, aes(count, avg_steps)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+ggplot(df_summary, aes(count, avg_calories)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+ggplot(df_summary, aes(count, avg_sedMin)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+ggplot(df_summary, aes(count, avg_lightMin)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+ggplot(df_summary, aes(count, avg_modMin)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+ggplot(df_summary, aes(count, avg_veryMin)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+```
+#### graphs above: count is number of observations from each person in relation to their averages --> as you can see the amount you use the device doesn't effect in increase in other variables
+
+```{r}
+
+ggplot(df_sum_large, aes(count, avg_steps)) + 
+  geom_point() +
+  facet_grid( provider ~ . )
+```
+
+### sleep graphs
+```{r}
+# sleep_data = ddply(sleep_data, .(snore), transform,
+#                    pct_snore=(SleepNum/sum(SleepNum) * 100))
+# 
+# sleep_data = ddply(sleep_data, .(snore), transform, pos_snore = (cumsum(SleepNum) - 0.5 * SleepNum))
+# 
+# sleep_data$pct_snorelabel = paste0(sprintf("%.0f", sleep_data$pct_snore), "%")
+
+```
+
+
+```{r}
+ggplot(sleep_data, aes(factor(snore),fill=Sleep ) ) +
+  geom_bar(position = "stack") +
+  scale_x_discrete(name = "How often do you snore?", 
+                   labels=c("0" = "Never", "1" = "1-2 nights a week",
+                              "2" = "3-4 nights a week",
+                            "3" = "5 or more nights a week",
+                            "7" = "Refused",
+                            "9" = "Don't know")) +
+  theme(axis.text.x = element_text(angle = 45,hjust=1)) 
+```
+
+
+```{r}
+ggplot(sleep_data, aes(factor(bad_breathing),fill=Sleep) ) +
+  geom_bar(position = "stack") +
+  scale_x_discrete(name = "How often do you snort or stop breathing?", 
+                   labels=c("0" = "Never", "1" = "1-2 nights a week",
+                              "2" = "3-4 nights a week",
+                            "3" = "5 or more nights a week",
+                            "7" = "Refused",
+                            "9" = "Don't know")) +
+  theme(axis.text.x = element_text(angle = 45,hjust=1))
+```
+
+
+```{r}
+ggplot(sleep_data, aes(factor(bad_sleep),fill=Sleep ) ) +
+  geom_bar(position = "stack") +
+  scale_x_discrete(name = "Ever told doctor had trouble sleeping?", 
+                   labels=c("1" = "Yes", "2" = "No",
+                            "7" = "Refused",
+                            "9" = "Don't know")) +
+  theme(axis.text.x = element_text(angle = 45,hjust=1))
+```
+
+```{r}
+ggplot(sleep_data, aes(factor(sleepy),fill=Sleep)) +
+  geom_bar(position = "stack") +
+  scale_x_discrete(name = "How often feel overly sleepy during day?", 
+                   labels=c("0" = "Never", "1" = "Rarely - 1 time a month	",
+                              "2" = "Sometimes - 2-4 times a month",
+                            "3" = "Often- 5-15 times a month",
+                            "4" = "Almost always - 16-30 times a month",
+                            "7" = "Refused",
+                            "9" = "Don't know")) +
+  theme(axis.text.x = element_text(angle = 45,hjust=1))
+```
+
+
+```{r}
+ggplot(sleep_data, aes(factor(snore),fill=Sleep ) ) +
+  geom_bar(position = "stack") +
+  scale_x_discrete(name = "How often do you snore?", 
+                   labels=c("0" = "Never", "1" = "1-2 nights a week",
+                              "2" = "3-4 nights a week",
+                            "3" = "5 or more nights a week",
+                            "7" = "Refused",
+                            "9" = "Don't know")) +
+  theme(axis.text.x = element_text(angle = 45,hjust=1)) 
+```
+#### Week day sleep hours
+```{r}
+ggplot(sleep_data, aes(weekdayHRS) ) +
+  geom_bar()
+ggplot(sleep_data, aes(weekendHRS) ) +
+  geom_bar()
+```
+
+#### Sleep vs attributes(not informative)
+```{r}
+ggplot(sleep_data, aes(weekdayHRS, snore)) + 
+  geom_point()
+ggplot(sleep_data, aes(weekdayHRS, bad_breathing)) + 
+  geom_point()
+ggplot(sleep_data, aes(weekdayHRS, bad_sleep)) + 
+  geom_point()
+ggplot(sleep_data, aes(weekdayHRS, sleepy)) + 
+  geom_point()
+```
+#### Look at observations over time
+
+```{r}
+df_val_2019 <- df_val[df_val$num>as.numeric(as.Date("2019-01-01")),]
+ggplot(df_val_2019) + aes(x = date) + 
+  geom_bar()
+```
+#### Look at dates of different activity levels based on calories
+
+##### low activity
+```{r}
+df_low_cal <- df_val_2019[df_val_2019$calories<2152,]
+ggplot(df_low_cal) + aes(x = date) + 
+  geom_bar() +
+  labs(title='Low Calorie Output', x='Date', y='Count')
+```
+
+##### average activity
+```{r}
+df_avg_cal <- df_val_2019[df_val_2019$calories>=2152 & df_val_2019$calories<=2895 ,]
+ggplot(df_avg_cal) + aes(x = date) + 
+  geom_bar() +
+  labs(title='Average Calorie Output', x='Date', y='Count')
+```
+
+##### high activity
+```{r}
+df_high_cal <- df_val_2019[df_val_2019$calories<2895 ,]
+ggplot(df_high_cal) + aes(x = date) + 
+  geom_bar() +
+  labs(title='High Calorie Output', x='Date', y='Count')
+```
+##### Averages of dates
+```{r}
+df_low_count <-
+  df_low_cal %>%
+  group_by(date) %>%
+  mutate(count = n()) %>%
+  summarise(count=mean(count))
+mean(df_low_count$count)
+```
+
+```{r}
+df_avg_count <-
+  df_avg_cal %>%
+  group_by(date) %>%
+  mutate(count = n()) %>%
+  summarise(count=mean(count))
+mean(df_avg_count$count)
+```
+
+```{r}
+df_high_count <-
+  df_high_cal %>%
+  group_by(date) %>%
+  mutate(count = n()) %>%
+  summarise(count=mean(count))
+mean(df_high_count$count)
+```
+
+### Pearson Checks
+#### Compare steps & calories garmin
+```{r}
+cor.test(df_garmin$steps, df_garmin$calories)
+```
+
+#### Compare steps & calories fitbit
+```{r}
+cor.test(df_fitbit$steps, df_fitbit$calories)
+```
+
+#### Compare minutes of moderate physical activity & calories garmin
+```{r}
+cor.test(df_garmin$modMin, df_garmin$calories)
+```
+
+#### Compare minutes of moderate physical activity & calories fitbit
+```{r}
+cor.test(df_fitbit$modMin, df_fitbit$calories)
+```
+
+#### Compare minutes of vigorous physical activity & calories garmin
+```{r}
+cor.test(df_garmin$veryMin, df_garmin$calories)
+```
+
+#### Compare minutes of vigorous physical activity & calories fitbit
+```{r}
+cor.test(df_fitbit$veryMin, df_fitbit$calories)
+```
+
+#### Compare minutes of moderate physical activity & steps garmin
+```{r}
+cor.test(df_garmin$modMin, df_garmin$steps)
+```
+
+#### Compare minutes of moderate physical activity & steps fitbit
+```{r}
+cor.test(df_fitbit$modMin, df_fitbit$steps)
+```
+
+#### Compare minutes of vigorous physical activity & steps garmin
+```{r}
+cor.test(df_garmin$veryMin, df_garmin$steps)
+```
+
+#### Compare minutes of vigorous physical activity & steps fitbit
+```{r}
+cor.test(df_fitbit$veryMin, df_fitbit$steps)
+```
+
+
+
